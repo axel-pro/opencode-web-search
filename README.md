@@ -9,16 +9,30 @@ The agent reads full pages with OpenCode's built-in `webfetch`.
 
 ## Installation
 
-Add the plugin to `opencode.json` (in the project or in `~/.config/opencode/`):
+The package is not published to npm; npm installs it straight from GitHub, pinned to a release tag.
+Add it to the `package.json` of your project and run `npm install`:
+
+```json
+{
+  "devDependencies": {
+    "opencode-web-search": "github:axel-pro/opencode-web-search#v0.1.0"
+  }
+}
+```
+
+Then add the plugin to `opencode.json` by path (relative to `opencode.json`):
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-web-search"]
+  "plugin": ["./node_modules/opencode-web-search"]
 }
 ```
 
-OpenCode installs it on the next start. Requirements: OpenCode 1.18+ and Node.js 22.13+.
+Requirements: OpenCode 1.18+ and Node.js 22.13+.
+
+To update, change the tag and run `npm install` again, then restart OpenCode. Versions are listed on the
+[Tags](https://github.com/axel-pro/opencode-web-search/tags) page.
 
 ## The `web_search` tool
 
@@ -68,10 +82,16 @@ tool below — it shows which service answered what.
 
 ## Command line
 
-The same search is available as the `web-search` command:
+The same search is available as the `web-search` command. After installation:
 
 ```sh
-npx opencode-web-search saga pattern
+npx web-search saga pattern
+```
+
+Without installing, straight from GitHub:
+
+```sh
+npx github:axel-pro/opencode-web-search#v0.1.0 saga pattern
 ```
 
 ```
@@ -98,16 +118,15 @@ To try a local checkout in OpenCode, point the plugin at the directory:
 
 ## Releasing
 
-Publishing is done by the `Publish to npm` GitHub Actions workflow when a `v*` tag is pushed.
-The tag must match the version in `package.json`.
+A release is a `vX.Y.Z` git tag: users pin it in their `package.json`.
 
 ```sh
-npm version patch        # bumps package.json, commits and creates the v* tag
+npm version patch   # or minor / major: updates package.json and creates the vX.Y.Z tag
 git push --follow-tags
 ```
 
-One-time setup: create an npm access token (Automation or Granular with publish rights) and add it to the
-repository secrets as `NPM_TOKEN`.
+GitHub Actions (`.github/workflows/ci.yml`) runs the tests on Node.js 22 and 24 on every push to `main`
+and on pull requests. There is no release workflow: the tag itself is the release.
 
 ## License
 
