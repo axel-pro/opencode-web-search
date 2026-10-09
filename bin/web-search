@@ -1,0 +1,161 @@
+#!/usr/bin/env node
+// web-search — web search without an account or API key: Keenable first, Firecrawl if Keenable fails.
+//
+// The agent searches with the web_search tool (src/index.ts in this package). The plugin loads this file
+// as a module and calls search() inside the OpenCode process: OpenCode's fetch honours the proxy from
+// HTTPS_PROXY, while plain Node fetch does not. From a terminal: web-search <query>.
+//
+// Why these services. We need search without sign-up that also works from Russia. Exa and Parallel
+// block Russian IPs (403 from Cloudflare); DuckDuckGo, Bing, Yandex and Google answer automated requests
+// with a captcha or junk. Keenable and Firecrawl both offer an official free keyless entry point with a
+// per-IP limit. Keenable is the primary one: its terms do not prohibit this use and the limit is published
+// (1000 requests per hour per IP). Firecrawl gives better results, but its terms prohibit commercial use
+// without explicit permission, so it is only a fallback — for errors or an exhausted Keenable limit.
+// An empty Keenable result is not an error and does not trigger Firecrawl.
+//
+// Only the query text is sent to the services; Keenable also requires an application name.
+"use strict";
+
+const TIMEOUT_MS = 20_000;
+const SNIPPET_CHARS = 300;
+const DEFAULT_LIMIT = 8;
+const MAX_LIMIT = 20;
+const APP_NAME = "opencode-web-search";
+
+const USAGE = `Usage:
+  web-search [-n <count>] <query>
+
+Searches the web via Keenable (via Firecrawl if Keenable fails or its limit is exhausted) and prints
+the title, link and snippet of each result. -n — number of results (default ${DEFAULT_LIMIT}, at most ${MAX_LIMIT}).
+Exit codes: 0 — done (including when nothing is found); 1 — no service responded; 2 — invalid invocation.
+`;
+
+async function postJson(fetch, provider, url, body, headers, signal) {
+  const timeout = AbortSignal.timeout(TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify(body),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new Error(timeout.aborted ? `${provider}: no response within ${TIMEOUT_MS / 1000} s` : `${provider}: ${error.message}`);
+  }
+  const text = await response.text();
+  if (!response.ok) throw new Error(`${provider}: HTTP ${response.status} ${text.replace(/\s+/g, " ").trim().slice(0, 200)}`.trim());
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${provider}: response is not JSON: ${text.slice(0, 200)}`);
+  }
+}
+
+const PROVIDERS = [
+  {
+    name: "Keenable",
+    async search(fetch, query, limit, signal) {
+      const data = await postJson(
+        fetch,
+        this.name,
+        "https://api.keenable.ai/v1/search/public",
+        { query, max_results: limit },
+        { "X-Keenable-Title": APP_NAME },
+        signal,
+      );
+      return (data.results ?? []).map((r) => ({
+        title: r.title,
+        url: r.url,
+        snippet: r.snippet || r.description,
+        date: r.published_at,
+      }));
+    },
+  },
+  {
+    name: "Firecrawl",
+    async search(fetch, query, limit, signal) {
+      const data = await postJson(fetch, this.name, "https://api.firecrawl.dev/v2/search", { query, limit }, {}, signal);
+      return (data.data?.web ?? []).map((r) => ({ title: r.title, url: r.url, snippet: r.description }));
+    },
+  },
+];
+
+// Tries the services in order: the next one only if the previous one returned an error.
+// Returns { provider, results, failures }; if none responded, throws an error listing every reason.
+async function search(query, { limit = DEFAULT_LIMIT, signal, fetch = globalThis.fetch } = {}) {
+  query = String(query ?? "").trim();
+  if (!query) throw new Error("empty query");
+  limit = Math.min(Math.max(Math.trunc(Number(limit)) || DEFAULT_LIMIT, 1), MAX_LIMIT);
+  const failures = [];
+  for (const provider of PROVIDERS) {
+    try {
+      const results = await provider.search(fetch, query, limit, signal);
+      return { provider: provider.name, results: results.filter((r) => r.url).slice(0, limit), failures };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      failures.push(error.message);
+    }
+  }
+  throw new Error(`search failed:\n${failures.map((f) => `- ${f}`).join("\n")}`);
+}
+
+// Snippets arrive as page Markdown: strip links, headings and emphasis, then truncate.
+function cleanSnippet(text) {
+  const plain = String(text ?? "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[#*_`>§]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return plain.length > SNIPPET_CHARS ? `${plain.slice(0, SNIPPET_CHARS)}…` : plain;
+}
+
+function format({ provider, results, failures }) {
+  const lines = [];
+  if (failures.length) lines.push(`${failures.join("; ")} — results from ${provider}.`, "");
+  if (!results.length) lines.push("Nothing found.");
+  results.forEach((r, i) => {
+    const date = /^\d{4}-\d\d-\d\d/.exec(r.date ?? "")?.[0];
+    lines.push(`${i + 1}. ${cleanSnippet(r.title) || r.url}${date ? ` (${date})` : ""}`, `   ${r.url}`);
+    const snippet = cleanSnippet(r.snippet);
+    if (snippet) lines.push(`   ${snippet}`);
+  });
+  return `${lines.join("\n")}\n`;
+}
+
+function fail(message, code) {
+  process.stderr.write(`web-search: ${message}\n`);
+  process.exit(code);
+}
+
+async function main(argv) {
+  let limit = DEFAULT_LIMIT;
+  const words = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "-h" || arg === "--help") {
+      process.stdout.write(USAGE);
+      return;
+    } else if (arg === "-n") {
+      limit = Number(argv[++i]);
+      if (!Number.isInteger(limit) || limit < 1) fail(`-n needs an integer of at least 1\n\n${USAGE}`, 2);
+    } else if (arg.startsWith("-") && !words.length) {
+      fail(`unknown option ${arg}\n\n${USAGE}`, 2);
+    } else {
+      words.push(arg);
+    }
+  }
+  if (!words.length) fail(`no query given\n\n${USAGE}`, 2);
+  let result;
+  try {
+    result = await search(words.join(" "), { limit });
+  } catch (error) {
+    fail(error.message, 1);
+  }
+  process.stdout.write(format(result));
+}
+
+module.exports = { search, format, PROVIDERS };
+
+if (require.main === module) main(process.argv.slice(2));

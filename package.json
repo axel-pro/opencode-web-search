@@ -1,0 +1,46 @@
+{
+  "name": "opencode-web-search",
+  "version": "0.1.0",
+  "description": "OpenCode plugin: the web_search tool searches the web without an account or API key",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "web-search",
+    "search",
+    "keenable",
+    "firecrawl"
+  ],
+  "license": "MIT",
+  "author": "Mikhail Badin",
+  "homepage": "https://github.com/axel-pro/opencode-web-search#readme",
+  "bugs": {
+    "url": "https://github.com/axel-pro/opencode-web-search/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/axel-pro/opencode-web-search.git"
+  },
+  "main": "src/index.ts",
+  "bin": {
+    "web-search": "bin/web-search"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "prepublishOnly": "npm test"
+  },
+  "engines": {
+    "node": ">=22.13.0",
+    "opencode": "^1.18.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.18.35"
+  }
+}
